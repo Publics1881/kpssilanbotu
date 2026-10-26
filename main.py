@@ -1,4 +1,5 @@
 import requests
+import certifi
 from bs4 import BeautifulSoup
 
 url = "https://www.ilan.gov.tr/ilan-ara"
@@ -15,7 +16,7 @@ try:
     response = requests.get(
         url,
         headers=headers,
-        timeout=30
+        timeout=30, verify=certifi.where()
     )
 
     print("HTTP DURUMU:", response.status_code)
