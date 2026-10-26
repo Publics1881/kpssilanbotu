@@ -21,7 +21,7 @@ try:
         url,
         json=veriler,
         headers=headers,
-        timeout=30, verify=False
+        timeout=30
     )
 
     print("HTTP DURUMU:", cevap.status_code)
