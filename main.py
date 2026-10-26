@@ -1,20 +1,20 @@
-CHAT_ID,
-                "text": mesaj,
-                "disable_web_page_preview": True,
-            },
-            timeout=25,
-        )
-        sonuc = r.json()
+        CHAT_ID,
+        "text": mesaj,
+        "disable_web_page_preview": True,
+    },
+    timeout=25,
+)
+sonuc = r.json()
 
-        if not r.ok or not sonuc.get("ok"):
-            print("Telegram hatası:", sonuc)
-            return False
+if not r.ok or not sonuc.get("ok"):
+    print("Telegram hatası:", sonuc)
+    return False
 
-        return True
+return True
 
-    except (requests.RequestException, ValueError) as hata:
-        print("Telegram hatası:", hata)
-        return False
+except (requests.RequestException, ValueError) as hata:
+    print("Telegram hatası:", hata)
+    return False
 
 
 def tara(kaynak, adres):
@@ -42,7 +42,6 @@ def tara(kaynak, adres):
         if any(normalize(k) in norm_baslik for k in HARIC_BASLIKLAR):
             continue
 
-        # Başlıkta yalnızca hedef kadrolardan biri aranır.
         eslesme = [
             k for k in HEDEF_KADROLAR
             if normalize(k) in norm_baslik
@@ -66,14 +65,12 @@ def tara(kaynak, adres):
         ):
             continue
 
-        # Sayfada tarih bulunamazsa yanlış ilan göndermemek için ele.
         tarih = tarih_bul(baslik + " " + sayfa_basligi + " " + icerik)
 
         if tarih is None:
             print("Tarih bulunamadı, elendi:", baslik)
             continue
 
-        # Yalnızca bugünden sonraki tarihli ilanlar.
         if tarih <= date.today():
             print("Güncel değil, elendi:", baslik, tarih)
             continue
@@ -108,5 +105,5 @@ def main():
             print(f"{kaynak} hatası: {hata}")
 
 
-if name == "__main__":
+if __name__ == "__main__":
     main()
