@@ -4,7 +4,8 @@ siteler = {
     "Kariyer Kapısı": "https://kariyerkapisi.gov.tr/",
     "İŞKUR": "https://www.iskur.gov.tr/",
     "Adalet Bakanlığı": "https://pgm.adalet.gov.tr/Home/TumHaberler/1",
-    "Adalet Bakanlığı Ana Sayfa": "https://www.adalet.gov.tr/"
+    "YÖK": "https://www.yok.gov.tr/",
+    "Resmî Gazete": "https://www.resmigazete.gov.tr/"
 }
 
 for isim, url in siteler.items():
