@@ -1,170 +1,99 @@
-import os
-import re
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
-
-SITELER = {
-    "Adalet Bakanlığı": "https://pgm.adalet.gov.tr/Home/TumHaberler/1",
-    "Kariyer Kapısı": "https://kariyerkapisi.gov.tr/",
-    "İŞKUR": "https://www.iskur.gov.tr/",
-    "YÖK": "https://www.yok.gov.tr/",
-    "ÖSYM": "https://www.osym.gov.tr/",
-    "Resmî Gazete": "https://www.resmigazete.gov.tr/",
-}
-
-HEDEF_KADROLAR = [
-    "zabıt katibi",
-    "zabıt kâtibi",
-    "icra katibi",
-    "icra kâtibi",
-    "veri hazırlama kontrol işletmeni",
-    "cezaevi kâtibi",
-    "cezaevi katibi",
-    "mübaşir",
-    "vhki",
-    "veri hazırlama",
-    "veri kontrol",
-    "büro personeli",
-    "büro görevlisi",
-    "öğrenci işleri",
-    "bilgisayar işletmeni",
-    "bilgisayar işletmenliği",
-    "bilgisayar sertifikası",
-]
-
-HARIC_BASLIKLAR = [
-    "sınav sonuçları",
-    "başvuru sonuçları",
-    "yerleştirme sonuçları",
-    "sözlü sınav sonuçları",
-    "uygulama sınav metinleri",
-    "uygulamalı sınav metinleri",
-    "değerlendirme kriterleri",
-    "görevde yükselme sınavı",
-    "yedek aday",
-]
-
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-DOSYA = "gonderilen_ilanlar.txt"
-
-OTURUM = requests.Session()
-OTURUM.headers.update({"User-Agent": "Mozilla/5.0"})
-
-
-def norm(metin):
-    metin = (metin or "").casefold().replace("ı", "i")
-    return re.sub(r"\s+", " ", metin).strip()
-
-
-def oku(url):
-    try:
-        r = OTURUM.get(url, timeout=25)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        for etiket in soup(
-            ["script", "style", "nav", "footer", "header", "noscript"]
-        ):
-            etiket.decompose()
-
-        baslik = soup.title.get_text(" ", strip=True) if soup.title else ""
-        icerik = soup.get_text(" ", strip=True)
-        return soup, baslik, icerik
-    except requests.RequestException as e:
-        print("Sayfa okunamadı:", url, e)
-        return None, "", ""
-
-
-def hedefler(metin):
-    metin = norm(metin)
-    return [k for k in HEDEF_KADROLAR if norm(k) in metin]
-
-
-def haric_mi(baslik):
-    baslik = norm(baslik)
-    return any(norm(k) in baslik for k in HARIC_BASLIKLAR)
-
-
-def gonder(mesaj):
-    if not TOKEN or not CHAT_ID:
-        print("HATA: Telegram Secret eksik.")
-        return False
-
-    try:
-        r = OTURUM.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={
-                "chat_id": CHAT_ID,
+CHAT_ID,
                 "text": mesaj,
                 "disable_web_page_preview": True,
             },
             timeout=25,
         )
         sonuc = r.json()
+
         if not r.ok or not sonuc.get("ok"):
             print("Telegram hatası:", sonuc)
             return False
+
         return True
-    except (requests.RequestException, ValueError) as e:
-        print("Telegram hatası:", e)
+
+    except (requests.RequestException, ValueError) as hata:
+        print("Telegram hatası:", hata)
         return False
 
 
 def tara(kaynak, adres):
     print(f"\n--- {kaynak} taranıyor ---")
     ana_host = urlparse(adres).netloc
-    soup, _, _ = oku(adres)
+    soup, _, _ = sayfa_oku(adres)
 
     if soup is None:
         return
 
-    gonderilen = set()
-    if os.path.exists(DOSYA):
-        with open(DOSYA, "r", encoding="utf-8") as f:
-            gonderilen = {x.strip() for x in f if x.strip()}
-
-    sayac = 0
+    yeni = 0
+    incelenen = 0
 
     for a in soup.find_all("a", href=True):
         baslik = a.get_text(" ", strip=True)
         link = urljoin(adres, a["href"]).split("#")[0]
+        norm_baslik = normalize(baslik)
 
         if not baslik or urlparse(link).netloc != ana_host:
             continue
-        if link == adres or link in gonderilen:
-            continue
-        if haric_mi(baslik):
+
+        if link == adres or link in GONDERILENLER:
             continue
 
-        eslesme = hedefler(baslik)
+        if any(normalize(k) in norm_baslik for k in HARIC_BASLIKLAR):
+            continue
+
+        # Başlıkta yalnızca hedef kadrolardan biri aranır.
+        eslesme = [
+            k for k in HEDEF_KADROLAR
+            if normalize(k) in norm_baslik
+        ]
+
         if not eslesme:
             continue
 
-        _, sayfa_basligi, icerik = oku(link)
+        incelenen += 1
+        if incelenen > 50:
+            break
+
+        _, sayfa_basligi, icerik = sayfa_oku(link)
+
         if not icerik:
             continue
-        if haric_mi(baslik + " " + sayfa_basligi):
+
+        if any(
+            normalize(k) in normalize(baslik + " " + sayfa_basligi)
+            for k in HARIC_BASLIKLAR
+        ):
             continue
 
-        # Test amacıyla tarih kontrolü uygulanmıyor.
+        # Sayfada tarih bulunamazsa yanlış ilan göndermemek için ele.
+        tarih = tarih_bul(baslik + " " + sayfa_basligi + " " + icerik)
+
+        if tarih is None:
+            print("Tarih bulunamadı, elendi:", baslik)
+            continue
+
+        # Yalnızca bugünden sonraki tarihli ilanlar.
+        if tarih <= date.today():
+            print("Güncel değil, elendi:", baslik, tarih)
+            continue
+
         mesaj = (
-            "📢 KAMU İLANI - TEST\n\n"
+            "📢 YENİ KAMU İLANI\n\n"
             f"Kaynak: {kaynak}\n"
             f"Başlık: {baslik}\n"
-            f"Eşleşen ifadeler: {', '.join(eslesme)}\n"
+            f"İlan tarihi: {tarih.strftime('%d.%m.%Y')}\n"
+            f"Eşleşen kadro: {', '.join(eslesme)}\n"
             f"Bağlantı: {link}\n\n"
-            "⚠️ Test sürümü: Tarih ve başvuru uygunluğu doğrulanmadı."
+            "⚠️ Başvuru şartlarını ve son başvuru tarihini "
+            "resmî ilandan kontrol et."
         )
 
-        if gonder(mesaj):
-            with open(DOSYA, "a", encoding="utf-8") as f:
-                f.write(link + "\n")
-            gonderilen.add(link)
-            sayac += 1
+        if telegram_gonder(mesaj):
+            kaydet(link)
+            yeni += 1
 
-    print(f"{kaynak}: {sayac} ilan gönderildi.")
+    print(f"{kaynak}: {yeni} ilan gönderildi.")
 
 
 def main():
@@ -175,9 +104,9 @@ def main():
     for kaynak, adres in SITELER.items():
         try:
             tara(kaynak, adres)
-        except Exception as e:
-            print(f"{kaynak} hatası:", e)
+        except Exception as hata:
+            print(f"{kaynak} hatası: {hata}")
 
 
-if __name__ == "__main__":
+if name == "__main__":
     main()
