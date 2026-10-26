@@ -1,6 +1,7 @@
 import os
 import re
 import requests
+from datetime import datetime, date
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
@@ -13,7 +14,6 @@ SITELER = {
     "Resmî Gazete": "https://www.resmigazete.gov.tr/",
 }
 
-# Yalnızca istediğin kadrolar
 HEDEF_KADROLAR = [
     "zabıt katibi",
     "zabıt kâtibi",
@@ -21,6 +21,7 @@ HEDEF_KADROLAR = [
     "icra kâtibi",
     "veri hazırlama kontrol işletmeni",
     "cezaevi kâtibi",
+    "cezaevi katibi",
     "mübaşir",
     "vhki",
     "veri hazırlama",
@@ -33,13 +34,18 @@ HEDEF_KADROLAR = [
     "bilgisayar sertifikası",
 ]
 
-HARIC_KELIMELER = [
+HARIC_BASLIKLAR = [
     "sınav sonuçları",
     "başvuru sonuçları",
     "yerleştirme sonuçları",
     "sözlü sınav sonuçları",
-    "yedek aday duyurusu",
-    "sınav sonuçlarına ilişkin",
+    "uygulama sınav metinleri",
+    "uygulamalı sınav metinleri",
+    "değerlendirme kriterleri",
+    "görevde yükselme sınavı",
+    "sınav duyurusu",
+    "sonuç duyurusu",
+    "yedek aday",
 ]
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -47,16 +53,80 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 DOSYA = "gonderilen_ilanlar.txt"
 
 OTURUM = requests.Session()
-OTURUM.headers.update({
-    "User-Agent": "Mozilla/5.0"
-})
+OTURUM.headers.update({"User-Agent": "Mozilla/5.0"})
 
 
-def duzelt(metin):
+def normalize(metin):
     metin = (metin or "").casefold()
     metin = metin.replace("ı", "i")
-    metin = re.sub(r"\s+", " ", metin)
-    return metin.strip()
+    return re.sub(r"\s+", " ", metin).strip()
+
+
+def sayfa_oku(url):
+    try:
+        r = OTURUM.get(url, timeout=25)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        for etiket in soup(
+            ["script", "style", "nav", "footer", "header", "noscript"]
+        ):
+            etiket.decompose()
+
+        baslik = soup.title.get_text(" ", strip=True) if soup.title else ""
+        icerik = soup.get_text(" ", strip=True)
+        return soup, baslik, icerik
+
+    except requests.RequestException as hata:
+        print(f"Sayfa okunamadı: {url} | {hata}")
+        return None, "", ""
+
+
+def tarih_bul(metin):
+    metin = metin or ""
+
+    desenler = [
+        r"\b(\d{1,2})[./-](\d{1,2})[./-](20\d{2})\b",
+        r"\b(20\d{2})[./-](\d{1,2})[./-](\d{1,2})\b",
+    ]
+
+    bulunan = []
+
+    for desen in desenler:
+        for eslesme in re.finditer(desen, metin):
+            try:
+                parcalar = eslesme.groups()
+
+                if desen == desenler[0]:
+                    gun, ay, yil = map(int, parcalar)
+                else:
+                    yil, ay, gun = map(int, parcalar)
+
+                bulunan.append(date(yil, ay, gun))
+            except ValueError:
+                continue
+
+    aylar = {
+        "ocak": 1, "şubat": 2, "subat": 2, "mart": 3,
+        "nisan": 4, "mayıs": 5, "mayis": 5, "haziran": 6,
+        "temmuz": 7, "ağustos": 8, "agustos": 8,
+        "eylül": 9, "eylul": 9, "ekim": 10, "kasım": 11,
+        "kasim": 11, "aralık": 12, "aralik": 12,
+    }
+
+    for eslesme in re.finditer(
+        r"\b(\d{1,2})\s+([a-zçğıöşü]+)\s+(20\d{2})\b",
+        normalize(metin),
+    ):
+        try:
+            gun = int(eslesme.group(1))
+            ay = aylar[eslesme.group(2)]
+            yil = int(eslesme.group(3))
+            bulunan.append(date(yil, ay, gun))
+        except (ValueError, KeyError):
+            continue
+
+    return max(bulunan) if bulunan else None
 
 
 def gonderilenleri_oku():
@@ -72,7 +142,6 @@ GONDERILENLER = gonderilenleri_oku()
 
 def kaydet(link):
     GONDERILENLER.add(link)
-
     with open(DOSYA, "a", encoding="utf-8") as f:
         f.write(link + "\n")
 
@@ -82,11 +151,9 @@ def telegram_gonder(mesaj):
         print("HATA: Telegram Secret bilgileri eksik.")
         return False
 
-    adres = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-
     try:
-        cevap = OTURUM.post(
-            adres,
+        r = OTURUM.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             data={
                 "chat_id": CHAT_ID,
                 "text": mesaj,
@@ -94,64 +161,21 @@ def telegram_gonder(mesaj):
             },
             timeout=25,
         )
+        sonuc = r.json()
 
-        sonuc = cevap.json()
-
-        if not cevap.ok or not sonuc.get("ok"):
-            print("Telegram gönderim hatası:", sonuc)
+        if not r.ok or not sonuc.get("ok"):
+            print("Telegram hatası:", sonuc)
             return False
 
         return True
 
     except (requests.RequestException, ValueError) as hata:
-        print("Telegram bağlantı hatası:", hata)
+        print("Telegram hatası:", hata)
         return False
 
 
-def sayfa_oku(adres):
-    try:
-        cevap = OTURUM.get(adres, timeout=25)
-        cevap.raise_for_status()
-
-        soup = BeautifulSoup(cevap.text, "html.parser")
-
-        for etiket in soup([
-            "script", "style", "nav", "footer",
-            "header", "noscript", "svg"
-        ]):
-            etiket.decompose()
-
-        baslik = soup.title.get_text(" ", strip=True) if soup.title else ""
-        icerik = soup.get_text(" ", strip=True)
-
-        return soup, baslik, icerik
-
-    except requests.RequestException as hata:
-        print(f"Sayfa okunamadı: {adres} | {hata}")
-        return None, "", ""
-
-
-def hedef_bul(metin):
-    metin = duzelt(metin)
-
-    return [
-        kadro for kadro in HEDEF_KADROLAR
-        if duzelt(kadro) in metin
-    ]
-
-
-def sonuc_duyurusu_mu(metin):
-    metin = duzelt(metin)
-
-    return any(
-        duzelt(kelime) in metin
-        for kelime in HARIC_KELIMELER
-    )
-
-
-def tara(isim, adres):
-    print(f"\n--- {isim} taranıyor ---")
-
+def tara(kaynak, adres):
+    print(f"\n--- {kaynak} taranıyor ---")
     ana_host = urlparse(adres).netloc
     soup, _, _ = sayfa_oku(adres)
 
@@ -164,26 +188,28 @@ def tara(isim, adres):
     for a in soup.find_all("a", href=True):
         baslik = a.get_text(" ", strip=True)
         link = urljoin(adres, a["href"]).split("#")[0]
+        norm_baslik = normalize(baslik)
 
-        if not baslik:
+        if not baslik or urlparse(link).netloc != ana_host:
             continue
 
-        if urlparse(link).netloc != ana_host:
+        if link == adres or link in GONDERILENLER:
             continue
 
-        if link in GONDERILENLER or link == adres:
+        if any(normalize(k) in norm_baslik for k in HARIC_BASLIKLAR):
             continue
 
-        # Genel ifadeler değil, yalnızca hedef kadrolar
-        if not hedef_bul(baslik):
-            continue
+        # Başlıkta yalnızca hedef kadrolardan biri aranır.
+        eslesme = [
+            k for k in HEDEF_KADROLAR
+            if normalize(k) in norm_baslik
+        ]
 
-        if sonuc_duyurusu_mu(baslik):
+        if not eslesme:
             continue
 
         incelenen += 1
-
-        if incelenen > 40:
+        if incelenen > 50:
             break
 
         _, sayfa_basligi, icerik = sayfa_oku(link)
@@ -191,32 +217,40 @@ def tara(isim, adres):
         if not icerik:
             continue
 
-        tam_metin = baslik + " " + sayfa_basligi + " " + icerik
-
-        if sonuc_duyurusu_mu(baslik + " " + sayfa_basligi):
+        if any(
+            normalize(k) in normalize(baslik + " " + sayfa_basligi)
+            for k in HARIC_BASLIKLAR
+        ):
             continue
 
-        eslesmeler = hedef_bul(tam_metin)
+        # Sayfada tarih bulunamazsa yanlış ilan göndermemek için ele.
+        tarih = tarih_bul(baslik + " " + sayfa_basligi + " " + icerik)
 
-        if not eslesmeler:
+        if tarih is None:
+            print("Tarih bulunamadı, elendi:", baslik)
+            continue
+
+        # Yalnızca bugünden sonraki tarihli ilanlar.
+        if tarih <= date.today():
+            print("Güncel değil, elendi:", baslik, tarih)
             continue
 
         mesaj = (
-            "📢 KAMU PERSONEL İLANI\n\n"
-            f"Kaynak: {isim}\n"
+            "📢 YENİ KAMU İLANI\n\n"
+            f"Kaynak: {kaynak}\n"
             f"Başlık: {baslik}\n"
+            f"İlan tarihi: {tarih.strftime('%d.%m.%Y')}\n"
+            f"Eşleşen kadro: {', '.join(eslesme)}\n"
             f"Bağlantı: {link}\n\n"
-            f"Eşleşen kadrolar: {', '.join(eslesmeler)}\n\n"
-            "⚠️ Başvurmadan önce mezuniyet, nitelik kodları "
-            "ve başvuru tarihini resmî ilandan kontrol et."
+            "⚠️ Başvuru şartlarını ve son başvuru tarihini "
+            "resmî ilandan kontrol et."
         )
 
         if telegram_gonder(mesaj):
             kaydet(link)
             yeni += 1
-            print("Gönderildi:", baslik)
 
-    print(f"{isim}: {yeni} yeni ilan gönderildi.")
+    print(f"{kaynak}: {yeni} ilan gönderildi.")
 
 
 def main():
@@ -224,11 +258,11 @@ def main():
         print("HATA: TELEGRAM_BOT_TOKEN veya TELEGRAM_CHAT_ID eksik.")
         return
 
-    for isim, adres in SITELER.items():
+    for kaynak, adres in SITELER.items():
         try:
-            tara(isim, adres)
+            tara(kaynak, adres)
         except Exception as hata:
-            print(f"{isim} tarama hatası: {hata}")
+            print(f"{kaynak} hatası: {hata}")
 
 
 if __name__ == "__main__":
