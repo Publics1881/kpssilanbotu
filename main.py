@@ -1,21 +1,16 @@
 import requests
-import xml.etree.ElementTree as ET
 
-url = "https://www.kamupersoneli.net/rss/haberler/personel-alimi/"
+siteler = {
+    "Kariyer Kapısı": "https://kariyerkapisi.gov.tr/",
+    "İlan.gov.tr": "https://www.ilan.gov.tr/ilan-ara",
+    "Kamu Personeli": "https://www.kamupersoneli.net/",
+    "İŞKUR": "https://www.iskur.gov.tr/",
+    "Resmî Gazete": "https://www.resmigazete.gov.tr/"
+}
 
-try:
-    response = requests.get(url, timeout=30)
-    print("HTTP DURUMU:", response.status_code)
-    response.raise_for_status()
-
-    root = ET.fromstring(response.content)
-
-    for item in root.findall(".//item"):
-        title = item.findtext("title", default="Başlık yok")
-        link = item.findtext("link", default="")
-        print(title)
-        print(link)
-        print("-" * 40)
-
-except Exception as e:
-    print("HATA:", e)
+for isim, url in siteler.items():
+    try:
+        cevap = requests.get(url, timeout=20)
+        print(f"{isim}: HTTP {cevap.status_code}")
+    except requests.RequestException as hata:
+        print(f"{isim}: BAĞLANTI HATASI - {hata}")
