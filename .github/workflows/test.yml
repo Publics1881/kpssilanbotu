@@ -16,8 +16,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Requests yukle
-        run: pip install requests
+      - name: Paketleri yukle
+        run: pip install requests beautifulsoup4
 
       - name: Ilan sitesini test et
         run: python main.py
