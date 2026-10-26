@@ -2,6 +2,8 @@ name: Ilan API Testi
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
 
 jobs:
   test:
@@ -18,9 +20,9 @@ jobs:
 
       - name: Paketleri yukle
         run: pip install requests beautifulsoup4 certifi
+
       - name: Ilan sitesini test et
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
-      
